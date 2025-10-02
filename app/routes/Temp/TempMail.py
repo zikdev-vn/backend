@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Path, Depends, Request
+from fastapi import APIRouter, HTTPException, Path as FPath, Depends, Request
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from config_database import TempEmail, get_db
@@ -16,7 +16,17 @@ import os
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from dotenv import load_dotenv
+from fastapi.templating import Jinja2Templates
+from fastapi.responses import HTMLResponse
+from pathlib import Path
+from datetime import datetime
+from pathlib import Path as PPath
+from fastapi import Cookie
 
+
+templates = Jinja2Templates(directory=str(PPath(__file__).parent))
+  
+templates.env.filters['datetimeformat'] = lambda value: datetime.fromtimestamp(value/1000).strftime("%Y-%m-%d %H:%M:%S")
 
 limiter = Limiter(key_func=get_remote_address)
 
@@ -121,26 +131,21 @@ def fetch_latest_emails(email_address: str, password: str, limit: int = 5):
 class SecureRequest(BaseModel):
     requestTime: str
     lang: Optional[str] = "en"
-    signature: str
+    signature: str 
 
 
 
-@router.post("/createmail", tags=["TempEmail"])
-def create_mail(lang: Optional[str] = "en", db: Session = Depends(get_db)):
-    # Tự tạo thời gian và chữ ký
+
+@router.get("/gmail-new", response_class=HTMLResponse)
+def create_mail_html(
+    request: Request,
+    lang: Optional[str] = "en",
+    db: Session = Depends(get_db)
+):
+    # Tạo chữ ký và thời gian
     request_time = str(int(time.time() * 1000))
     signature = sign_request_time(request_time)
 
-    # Nếu bạn cần gửi requestTime và signature đến API bên ngoài thì gửi
-    # Nếu không cần thì đoạn dưới có thể bỏ
-    # Dùng được nếu backend API yêu cầu
-    # payload = {
-    #     "requestTime": request_time,
-    #     "lang": lang,
-    #     "signature": signature
-    # }
-
-    # Tạo email và mật khẩu ngẫu nhiên
     email_addr = generate_random_email()
     password = generate_random_password()
 
@@ -172,7 +177,66 @@ def create_mail(lang: Optional[str] = "en", db: Session = Depends(get_db)):
         "Authorization": f"Bearer {API_TOKEN}"
     }
 
-    response = requests.post(API_URL, json=mail_payload, headers=headers)
+    response = requests.post(API_URL, json=mail_payload, headers=headers, verify=False)
+    if response.status_code != 200:
+        raise HTTPException(status_code=500, detail=f"Email API failed: {response.text}")
+
+    # Lưu vào DB
+    save_email_to_db(db, email_addr, password)
+
+    # Render HTML template giống /gmail-new
+    expires = int(time.time() + 3600) * 1000
+    html_response = templates.TemplateResponse("tempmail.html", {
+        "request": request,
+        "email": email_addr,
+        "expires": expires
+    })
+    
+    # Set cookie
+    html_response.set_cookie(key="temp_email", value=email_addr, max_age=3600)
+    html_response.headers["Content-Security-Policy"] = "frame-ancestors 'self' http://localhost:3000"
+
+    return html_response
+
+@router.post("/createmail", tags=["TempEmail"])
+def create_mail(lang: Optional[str] = "en", db: Session = Depends(get_db)):
+    # Tự tạo thời gian và chữ ký
+    request_time = str(int(time.time() * 1000))
+    signature = sign_request_time(request_time)
+
+    email_addr = generate_random_email()
+    password = generate_random_password()
+
+    mail_payload = {
+        "email": email_addr,
+        "raw_password": password,
+        "comment": "created via FastAPI",
+        "quota_bytes": 1000000000,
+        "global_admin": False,
+        "enabled": True,
+        "change_pw_next_login": True,
+        "enable_imap": True,
+        "enable_pop": True,
+        "allow_spoofing": True,
+        "forward_enabled": False,
+        "forward_destination": [],
+        "forward_keep": True,
+        "reply_enabled": False,
+        "reply_subject": "",
+        "reply_body": "",
+        "reply_startdate": "2025-01-01",
+        "reply_enddate": "2025-01-10",
+        "spam_threshold": 80
+    }
+
+    headers = {
+        "accept": "application/json",
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {API_TOKEN}"
+        
+    }
+
+    response = requests.post(API_URL, json=mail_payload, headers=headers , verify=False)
     if response.status_code == 200:
         save_email_to_db(db, email_addr, password)
         return {
@@ -194,7 +258,7 @@ def create_mail(lang: Optional[str] = "en", db: Session = Depends(get_db)):
 @limiter.limit("5/minute")
 def get_mail(
     request: Request,
-    email_address: str = Path(..., description="Email muốn xem"),
+    email_address: str = FPath(..., description="Email muốn xem"),
     limit: int = 50,
     db: Session = Depends(get_db)
 ):
@@ -221,7 +285,7 @@ def get_mail(
 
 @router.delete("/deletemail/{email_address}", tags=["TempEmail"])
 def delete_mail(
-    email_address: str = Path(..., description="Email muốn xóa"),
+    email_address: str = FPath(..., description="Email muốn xóa"),
     db: Session = Depends(get_db)
 ):
     password = get_password_from_db(db, email_address)
@@ -232,7 +296,7 @@ def delete_mail(
         "Authorization": f"Bearer {API_TOKEN}"
     }
 
-    response = requests.delete(url, headers=headers)
+    response = requests.delete(url, headers=headers, verify=False)
 
     if response.status_code == 404:
         raise HTTPException(status_code=404, detail="Email không tồn tại hoặc đã bị xóa trước đó")

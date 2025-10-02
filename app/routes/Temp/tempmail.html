@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>TempMail</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #232425;
+            color: #dfdfdf;
+            padding: 20px;
+        }
+
+        #email {
+            font-weight: bold;
+            font-size: 1.2rem;
+            color: #2563eb;
+        }
+
+        #messages {
+            margin-top: 20px;
+        }
+
+        button {
+            margin-right: 10px;
+            padding: 6px 12px;
+            font-size: 0.9rem;
+            border-radius: 4px;
+            border: none;
+            cursor: pointer;
+        }
+
+        #newEmailBtn {
+            background-color: #2563eb;
+            color: white;
+        }
+
+        #restoreEmailBtn {
+            background-color: #6b7280;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <h2>Email tạm của bạn:</h2>
+    <div style="display:flex; align-items:center; gap:10px;">
+    <p id="email" style="margin:0;">{{ email }}</p>
+    <button id="copyEmailBtn" style="padding:4px 8px; font-size:0.9rem; border-radius:4px; border:none; background-color:#2563eb; color:white; cursor:pointer;">
+        Copy
+    </button>
+</div>
+    <p>Hết hạn: <span id="expires">{{ expires | datetimeformat }}</span></p>
+
+    <div id="buttons" style="margin-top:20px;">
+        <button id="newEmailBtn">Lấy email mới</button>
+        <button id="restoreEmailBtn">Khôi phục email cũ</button>
+    </div>
+
+    <div id="messages">
+        <!-- Mail sẽ hiển thị ở đây, frontend poll /messages -->
+    </div>
+
+    <script>
+        let email = "{{ email }}";
+        let expireAt = {{ expires }};
+        console.log("Temp email:", email);
+
+        // Lưu email hiện tại vào localStorage
+        localStorage.setItem("lastTempEmail", email);
+        localStorage.setItem("lastTempEmailExpire", expireAt);
+
+        const emailEl = document.getElementById("email");
+        const expiresEl = document.getElementById("expires");
+
+        // Nút tạo email mới
+        document.getElementById("newEmailBtn").addEventListener("click", async () => {
+            try {
+                const res = await fetch("/api/createmail", { method: "POST" });
+                const data = await res.json();
+                if (data.code === 0) {
+                    email = data.data.name;
+                    expireAt = data.data.expires;
+
+                    emailEl.textContent = email;
+                    expiresEl.textContent = new Date(expireAt).toLocaleString();
+
+                    localStorage.setItem("lastTempEmail", email);
+                    localStorage.setItem("lastTempEmailExpire", expireAt);
+
+                    alert("Đã tạo email mới: " + email);
+                } else {
+                    alert("Tạo email thất bại: " + data.message);
+                }
+            } catch (err) {
+                console.error(err);
+                alert("Lỗi khi tạo email mới.");
+            }
+        });
+
+        // Nút khôi phục email cũ
+        document.getElementById("restoreEmailBtn").addEventListener("click", () => {
+            const oldEmail = localStorage.getItem("lastTempEmail");
+            const oldExpire = parseInt(localStorage.getItem("lastTempEmailExpire"), 10);
+
+            if (!oldEmail || !oldExpire) {
+                alert("Không tìm thấy email cũ.");
+                return;
+            }
+
+            const now = Date.now();
+            if (now > oldExpire) {
+                alert("Email cũ đã hết hạn.");
+            } else {
+                email = oldEmail;
+                expireAt = oldExpire;
+                emailEl.textContent = email;
+                expiresEl.textContent = new Date(expireAt).toLocaleString();
+                alert("Đã khôi phục email cũ: " + email);
+            }
+        });
+        // Copy email
+    document.getElementById("copyEmailBtn").addEventListener("click", () => {
+        const emailText = document.getElementById("email").textContent;
+        navigator.clipboard.writeText(emailText)
+            .then(() => alert("Đã sao chép email: " + emailText))
+            .catch(err => console.error("Copy thất bại:", err));
+    });
+     window.parent.postMessage({ email, expireAt }, "*");
+    </script>
+</body>
+</html>

@@ -16,13 +16,14 @@ router = APIRouter()
 GOOGLE_TOKEN_INFO_URL = os.getenv("GOOGLE_TOKEN_INFO_URL")      
 
 # ----------- Schemas -----------
+
+class GoogleLoginRequest(BaseModel):
+    token: str
+    
 class LoginRequest(BaseModel):
     #email : EmailStr
     name: str
     password: str
-
-class GoogleLoginRequest(BaseModel):
-    token: str
 
 # ----------- JWT Config (phải cấu hình riêng) -----------
 class Settings(BaseModel):
@@ -50,34 +51,6 @@ def get_optional_user(
         print("❌ Token lỗi:", str(e))
 
     return None
-
-@router.get("/user", tags=["auth"])
-def get_user(
-    Authorize: AuthJWT = Depends(),
-    db: Session = Depends(get_db)
-):
-    # Xác thực token và lấy thông tin người dùng
-    try:
-        Authorize.jwt_required()  # Phải có token
-        user_id = Authorize.get_jwt_subject()
-        user = db.query(User).filter(User.id == user_id).first()
-
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-
-        return {
-            "id": user.id,
-            "name": user.name,
-            "username": user.username,
-            "email": user.email,
-            "avatar_url": user.avatar_url,
-            #"created_at": user.created_at.isoformat(),
-            #"last_login_time": user.last_login_time.isoformat() if user.last_login_time else None,
-            "last_login_ip": user.last_login_ip
-        }
-
-    except Exception as e:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
 
 
 @router.post("/login" , tags=["auth"])

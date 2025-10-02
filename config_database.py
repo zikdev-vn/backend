@@ -10,15 +10,23 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy import text
 from sqlalchemy import inspect, text
 from sqlalchemy.exc import OperationalError
+
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+
+
 DATABASE_URL = "sqlite:///./database.db"
 Base = declarative_base()
 
 engine = create_engine(
-    DATABASE_URL, connect_args={"check_same_thread": False}
+    DATABASE_URL, connect_args={"check_same_thread": False}  # Chỉ cần cho SQLite
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-
+#def drop_expense_table(db: Session):
+#    db.execute(text("DROP TABLE IF EXISTS expense"))
+#    db.commit()
+#    print("Bảng Expense đã bị xóa.")
 
 def create_tables():
     
@@ -37,54 +45,6 @@ def generate_secure_id():
     return str(uuid.uuid4())
 
 
-def add_username_column_if_missing():
-    # Kiểm tra xem bảng 'user' có cột 'username' không
-    inspector = inspect(engine)
-    columns = [column['name'] for column in inspector.get_columns('user')]
-
-    # Kiểm tra nếu cột 'username' chưa có trong bảng
-    if 'username' not in columns:
-        print("Cột 'username' không tồn tại. Đang thêm cột vào bảng 'user'...")
-        
-        # Thêm cột 'username' mà không có UNIQUE
-        with engine.connect() as conn:
-            try:
-                # Thêm cột mà không có UNIQUE trước
-                conn.execute(text("ALTER TABLE user ADD COLUMN username VARCHAR(120)"))
-                print("Cột 'username' đã được thêm vào bảng 'user' mà không có UNIQUE.")
-                
-                # Sau khi thêm cột, cập nhật dữ liệu cho các bản ghi hiện tại
-                conn.execute(text("UPDATE user SET username = name WHERE username IS NULL"))
-                print("Cột 'username' đã được cập nhật cho các bản ghi hiện tại.")
-                
-                # Kiểm tra lại sự tồn tại của cột 'username' sau khi thêm
-                columns = [column['name'] for column in inspector.get_columns('user')]
-                if 'username' in columns:
-                    print("Cột 'username' đã được thêm thành công.")
-                else:
-                    print("Lỗi: Cột 'username' không thể thêm vào bảng.")
-                    
-                # Thêm lại ràng buộc UNIQUE cho cột 'username'
-                conn.execute(text("CREATE UNIQUE INDEX idx_username ON user(username)"))
-                print("Ràng buộc UNIQUE đã được thêm cho cột 'username'.")
-                
-                # Kiểm tra lại các giá trị trong cột 'username' sau khi cập nhật
-                result = conn.execute(text("SELECT username, COUNT(*) FROM user GROUP BY username HAVING COUNT(*) > 1"))
-                duplicates = result.fetchall()
-                if duplicates:
-                    print("Cảnh báo: Có bản ghi trùng lặp trong cột 'username'.")
-                    print(duplicates)
-                else:
-                    print("Không có bản ghi trùng lặp trong cột 'username'.")
-                    
-            except OperationalError as e:
-                print(f"Đã xảy ra lỗi khi thêm cột 'username': {e}")
-    else:
-        print("Cột 'username' đã tồn tại trong bảng 'user'. Không cần thêm.")
-
-# Gọi hàm kiểm tra và thêm cột nếu cần
-add_username_column_if_missing()
-# table for storing transaction history
 
 class User(Base):
     __tablename__ = "user"
@@ -100,6 +60,8 @@ class User(Base):
     last_login_ip = Column(String(45), nullable=True)
     transactions = relationship("TransactionHistory", back_populates="user")
     avatar_url = Column(String(255), nullable=True)
+
+    expenses = relationship("Expense", back_populates="user")
 
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
@@ -141,3 +103,15 @@ class TempEmail(Base):
 
     email = Column(String, primary_key=True, index=True)
     password = Column(String)
+
+
+class Expense(Base):
+    __tablename__ = "expense"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String, ForeignKey("user.id"))
+    amount = Column(Float)
+    description = Column(String(255))
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User", back_populates="expenses")
